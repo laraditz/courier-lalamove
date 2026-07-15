@@ -122,6 +122,10 @@ echo $tracking->meta['share_link'];
 $result = $lalamove->cancelShipment($waybillNumber);
 ```
 
+### Order inquiry
+
+Lalamove has no order-inquiry endpoint, so `getShipment()` always throws `UnsupportedOperationException`. Use `track()` to look up an order's current status instead.
+
 ### Check service availability
 
 ```php
