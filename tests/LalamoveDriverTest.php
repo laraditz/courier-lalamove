@@ -111,6 +111,14 @@ class LalamoveDriverTest extends TestCase
         $this->assertSame('pending', $result->status);
     }
 
+    // ── getShipment ──────────────────────────────────────────────────────
+
+    public function test_get_shipment_throws_unsupported_exception(): void
+    {
+        $this->expectException(UnsupportedOperationException::class);
+        (new LalamoveDriver($this->config()))->getShipment('ORD-001');
+    }
+
     // ── cancelShipment ───────────────────────────────────────────────────
 
     public function test_cancel_shipment_returns_cancel_result(): void

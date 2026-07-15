@@ -91,13 +91,20 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
         return ShipmentMapper::map($orderResponse);
     }
 
+    public function getShipment(string $reference): ShipmentResult
+    {
+        throw new \Laraditz\Courier\Exceptions\UnsupportedOperationException(
+            'Lalamove does not support order inquiry.'
+        );
+    }
+
     public function track(string $trackingNumber): TrackingResult
     {
         $response = $this->client->getOrder($trackingNumber);
         return TrackingMapper::map($trackingNumber, $response);
     }
 
-    public function cancelShipment(string $waybillNumber): CancelResult
+    public function cancelShipment(string $waybillNumber, ?string $reference = null): CancelResult
     {
         try {
             $this->client->cancelOrder($waybillNumber);
@@ -107,7 +114,7 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
         }
     }
 
-    public function getLabel(string $waybillNumber): LabelResult
+    public function getLabel(string $waybillNumber, ?string $reference = null): LabelResult
     {
         return LabelMapper::map();
     }
