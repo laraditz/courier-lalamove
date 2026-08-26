@@ -175,6 +175,8 @@ HMAC-SHA256("{timestamp}\r\nPOST\r\n{webhook path}\r\n\r\n{json_encode(data)}", 
 
 and compares it (constant-time) against the `signature` field, using the same `LALAMOVE_API_SECRET` used for signing outgoing API requests.
 
+The driver also implements `ExtractsWebhookReference`, so if you're using `laraditz/courier`'s webhook audit logging, `courier_webhook_logs` rows are populated with `waybill_number` (Lalamove's `orderId`, taken from `data.order.orderId`) so logs stay queryable by shipment. `reference` is always `null` — Lalamove has no separate merchant reference field. `WALLET_BALANCE_CHANGED` events carry no order at all, so both fields stay `null` for that event type.
+
 Register a webhook route and delegate to the courier manager:
 
 ```php

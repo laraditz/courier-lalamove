@@ -2,6 +2,7 @@
 
 namespace Laraditz\Courier\Lalamove\Tests;
 
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
@@ -196,5 +197,37 @@ class LalamoveDriverTest extends TestCase
             new AvailabilityPayload(new Location('1', 'SG', 'SG', 'SG'), new Location('1', 'SG', 'SG', 'SG'))
         );
         Http::assertSent(fn ($r) => $r->header('Market')[0] === 'SG');
+    }
+
+    // ── extractWebhookReference ─────────────────────────────────────────
+
+    private function webhookRequest(array $data): Request
+    {
+        $request = Request::create('/courier/webhook/lalamove', 'POST', content: json_encode([
+            'eventType' => 'ORDER_STATUS_CHANGED',
+            'data'      => $data,
+        ]));
+        $request->headers->set('Content-Type', 'application/json');
+
+        return $request;
+    }
+
+    public function test_extract_webhook_reference_returns_order_id_as_waybill_number(): void
+    {
+        $reference = (new LalamoveDriver($this->config()))->extractWebhookReference(
+            $this->webhookRequest(['order' => ['orderId' => 'ORD-001', 'status' => 'COMPLETED']])
+        );
+
+        $this->assertSame(['reference' => null, 'waybillNumber' => 'ORD-001'], $reference);
+    }
+
+    public function test_extract_webhook_reference_returns_null_when_no_order_present(): void
+    {
+        $reference = (new LalamoveDriver($this->config()))->extractWebhookReference(
+            $this->webhookRequest(['balance' => ['amount' => '100', 'currency' => 'HKD']])
+        );
+
+        $this->assertNull($reference['reference']);
+        $this->assertNull($reference['waybillNumber']);
     }
 }

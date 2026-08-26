@@ -4,6 +4,7 @@ namespace Laraditz\Courier\Lalamove;
 
 use Illuminate\Http\Request;
 use Laraditz\Courier\Contracts\CourierDriver;
+use Laraditz\Courier\Contracts\ExtractsWebhookReference;
 use Laraditz\Courier\Contracts\HandlesWebhooks;
 use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
@@ -32,7 +33,7 @@ use Laraditz\Courier\Lalamove\Mappers\RateMapper;
 use Laraditz\Courier\Lalamove\Mappers\ShipmentMapper;
 use Laraditz\Courier\Lalamove\Mappers\TrackingMapper;
 
-class LalamoveDriver implements CourierDriver, HandlesWebhooks
+class LalamoveDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhookReference
 {
     private LalamoveClient $client;
     private ?string $quotationId = null;
@@ -189,6 +190,17 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
             'ORDER_CREATED'                => $this->dispatchOrderCreated($payload),
             default                        => null,
         };
+    }
+
+    // ── ExtractsWebhookReference ────────────────────────────────────────────
+
+    public function extractWebhookReference(Request $request): array
+    {
+        // orderId doubles as the waybill number here (see ShipmentMapper); Lalamove has no separate merchant reference field.
+        return [
+            'reference'     => null,
+            'waybillNumber' => $request->input('data.order.orderId'),
+        ];
     }
 
     // ── Lalamove-specific proxy methods ───────────────────────────────────
