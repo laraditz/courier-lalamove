@@ -33,7 +33,6 @@ LALAMOVE_API_KEY=your-api-key
 LALAMOVE_API_SECRET=your-api-secret
 LALAMOVE_SANDBOX=false
 LALAMOVE_MARKET=MY
-LALAMOVE_WEBHOOK_SECRET=your-webhook-secret
 ```
 
 Then register the driver in `config/courier.php` (or however your `laraditz/courier` is configured):
@@ -41,11 +40,10 @@ Then register the driver in `config/courier.php` (or however your `laraditz/cour
 ```php
 'drivers' => [
     'lalamove' => [
-        'key'            => env('LALAMOVE_API_KEY'),
-        'secret'         => env('LALAMOVE_API_SECRET'),
-        'sandbox'        => env('LALAMOVE_SANDBOX', false),
-        'market'         => env('LALAMOVE_MARKET', 'MY'),
-        'webhook_secret' => env('LALAMOVE_WEBHOOK_SECRET'),
+        'key'     => env('LALAMOVE_API_KEY'),
+        'secret'  => env('LALAMOVE_API_SECRET'),
+        'sandbox' => env('LALAMOVE_SANDBOX', false),
+        'market'  => env('LALAMOVE_MARKET', 'MY'),
     ],
 ],
 ```
@@ -158,7 +156,13 @@ $lalamove->editStop($orderId, $stopId, ['address' => '...', 'coordinates' => [..
 
 ## Webhooks
 
-The driver implements `HandlesWebhooks` and verifies incoming requests using the `X-LLM-Token` header against `LALAMOVE_WEBHOOK_SECRET`.
+The driver implements `HandlesWebhooks` and verifies incoming requests using Lalamove's HMAC-SHA256 webhook signature scheme. Each webhook body carries `timestamp`, `signature`, and `data` fields; the driver recomputes
+
+```
+HMAC-SHA256("{timestamp}\r\nPOST\r\n{webhook path}\r\n\r\n{json_encode(data)}", LALAMOVE_API_SECRET)
+```
+
+and compares it (constant-time) against the `signature` field, using the same `LALAMOVE_API_SECRET` used for signing outgoing API requests.
 
 Register a webhook route and delegate to the courier manager:
 
@@ -175,9 +179,20 @@ Listen for these events in your `EventServiceProvider`:
 
 | Event class | Fired when |
 |---|---|
-| `Laraditz\Courier\Lalamove\Events\OrderStatusChanged` | `order.status.updated` received |
-| `Laraditz\Courier\Lalamove\Events\DriverAssigned` | `driver.assigned` received |
-| `Laraditz\Courier\Lalamove\Events\PodStatusChanged` | `pod.status.updated` received |
+| `Laraditz\Courier\Lalamove\Events\OrderStatusChanged` | `ORDER_STATUS_CHANGED` received |
+| `Laraditz\Courier\Lalamove\Events\DriverAssigned` | `DRIVER_ASSIGNED` received |
+| `Laraditz\Courier\Lalamove\Events\OrderAmountChanged` | `ORDER_AMOUNT_CHANGED` received |
+| `Laraditz\Courier\Lalamove\Events\OrderReplaced` | `ORDER_REPLACED` received (Cancel-and-Clone) |
+| `Laraditz\Courier\Lalamove\Events\WalletBalanceChanged` | `WALLET_BALANCE_CHANGED` received |
+| `Laraditz\Courier\Lalamove\Events\OrderEdited` | `ORDER_EDITED` received |
+| `Laraditz\Courier\Lalamove\Events\PodStatusChanged` | `POD_STATUS_CHANGED` received |
+| `Laraditz\Courier\Lalamove\Events\PopStatusChanged` | `POP_STATUS_CHANGED` received |
+| `Laraditz\Courier\Lalamove\Events\DeliveryCodeStatusChanged` | `DELIVERY_CODE_STATUS_CHANGED` received |
+| `Laraditz\Courier\Lalamove\Events\OrderCreated` | `ORDER_CREATED` received |
+
+Every event carries a `raw` array with the full webhook payload — Lalamove warns that webhook fields are subject to change, so typed properties only expose the small set of fields documented as stable; read anything else from `raw`.
+
+`PodStatusChanged`, `PopStatusChanged`, and `DeliveryCodeStatusChanged` carry a `stopId`. Lalamove's `stops` array has no real stop identifier, so `stopId` is the 0-based index of the stop the event applies to within `data.order.stops` — not a value Lalamove sends.
 
 #### `OrderStatusChanged`
 
@@ -197,6 +212,41 @@ public array  $driverInfo;
 public array  $raw;
 ```
 
+#### `OrderAmountChanged`
+
+```php
+public string $orderId;
+public string $totalPrice;
+public string $priorityFee;
+public string $currency;
+public array  $raw;
+```
+
+#### `OrderReplaced`
+
+```php
+public string $orderId;         // the new (cloned) order
+public string $previousOrderId;
+public array  $raw;
+```
+
+#### `WalletBalanceChanged`
+
+```php
+public string $amount;
+public string $currency;
+public array  $raw;
+```
+
+#### `OrderEdited`
+
+```php
+public string $orderId;
+public string $editReason; // e.g. CLIENT_REQUEST, OTHERS
+public string $editParty;  // e.g. USER, LALAMOVE_CUSTOMER_SUPPORT
+public array  $raw;        // raw.data.previousData / raw.data.order hold the actual diff
+```
+
 #### `PodStatusChanged`
 
 ```php
@@ -204,6 +254,32 @@ public string $orderId;
 public string $stopId;
 public string $podStatus;
 public array  $raw;
+```
+
+#### `PopStatusChanged`
+
+```php
+public string $orderId;
+public string $stopId;
+public array  $raw; // raw.data.order.stops[stopId].POP holds imageUrls / pickedUpAt
+```
+
+#### `DeliveryCodeStatusChanged`
+
+```php
+public string $orderId;
+public string $stopId;
+public string $deliveryCodeStatus; // e.g. Pending, Verified, Not Applicable
+public string $deliveryCodeValue;
+public array  $raw;
+```
+
+#### `OrderCreated`
+
+```php
+public string $orderId;
+public string $market;
+public array  $raw; // full order snapshot
 ```
 
 ## Testing

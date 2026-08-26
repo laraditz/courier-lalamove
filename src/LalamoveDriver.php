@@ -14,9 +14,16 @@ use Laraditz\Courier\DTOs\Results\RateCollection;
 use Laraditz\Courier\DTOs\Results\ServiceCollection;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
+use Laraditz\Courier\Lalamove\Events\DeliveryCodeStatusChanged;
 use Laraditz\Courier\Lalamove\Events\DriverAssigned;
+use Laraditz\Courier\Lalamove\Events\OrderAmountChanged;
+use Laraditz\Courier\Lalamove\Events\OrderCreated;
+use Laraditz\Courier\Lalamove\Events\OrderEdited;
+use Laraditz\Courier\Lalamove\Events\OrderReplaced;
 use Laraditz\Courier\Lalamove\Events\OrderStatusChanged;
 use Laraditz\Courier\Lalamove\Events\PodStatusChanged;
+use Laraditz\Courier\Lalamove\Events\PopStatusChanged;
+use Laraditz\Courier\Lalamove\Events\WalletBalanceChanged;
 use Laraditz\Courier\Lalamove\Http\LalamoveClient;
 use Laraditz\Courier\Lalamove\Mappers\AvailabilityMapper;
 use Laraditz\Courier\Lalamove\Mappers\CancelMapper;
@@ -129,14 +136,29 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
 
     public function verifyWebhook(Request $request): bool
     {
-        $secret = $this->config['webhook_secret'] ?? null;
-        $token  = $request->header('X-LLM-Token');
+        $secret = $this->config['secret'] ?? null;
 
-        if ($secret === null || $token === null) {
+        if ($secret === null) {
             return false;
         }
 
-        return hash_equals($secret, $token);
+        // Read the untouched raw body: $request->all() passes through Laravel's
+        // input-sanitizing middleware (e.g. ConvertEmptyStringsToNull), which rewrites
+        // "" to null and would silently break byte-for-byte signature reconstruction.
+        $payload   = json_decode($request->getContent(), true) ?? [];
+        $timestamp = $payload['timestamp'] ?? null;
+        $signature = $payload['signature'] ?? null;
+        $data      = $payload['data']      ?? null;
+
+        if ($timestamp === null || $signature === null || $data === null) {
+            return false;
+        }
+
+        $body         = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $rawSignature = "{$timestamp}\r\nPOST\r\n{$request->getPathInfo()}\r\n\r\n{$body}";
+        $expected     = hash_hmac('sha256', $rawSignature, $secret);
+
+        return hash_equals($expected, (string) $signature);
     }
 
     public function handleWebhook(Request $request): void
@@ -145,10 +167,17 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
         $eventType = $payload['eventType'] ?? '';
 
         match ($eventType) {
-            'order.status.updated' => $this->dispatchOrderStatusChanged($payload),
-            'driver.assigned'      => $this->dispatchDriverAssigned($payload),
-            'pod.status.updated'   => $this->dispatchPodStatusChanged($payload),
-            default                => null,
+            'ORDER_STATUS_CHANGED'         => $this->dispatchOrderStatusChanged($payload),
+            'DRIVER_ASSIGNED'              => $this->dispatchDriverAssigned($payload),
+            'ORDER_AMOUNT_CHANGED'         => $this->dispatchOrderAmountChanged($payload),
+            'ORDER_REPLACED'               => $this->dispatchOrderReplaced($payload),
+            'WALLET_BALANCE_CHANGED'       => $this->dispatchWalletBalanceChanged($payload),
+            'ORDER_EDITED'                 => $this->dispatchOrderEdited($payload),
+            'POD_STATUS_CHANGED'           => $this->dispatchPodStatusChanged($payload),
+            'POP_STATUS_CHANGED'           => $this->dispatchPopStatusChanged($payload),
+            'DELIVERY_CODE_STATUS_CHANGED' => $this->dispatchDeliveryCodeStatusChanged($payload),
+            'ORDER_CREATED'                => $this->dispatchOrderCreated($payload),
+            default                        => null,
         };
     }
 
@@ -218,12 +247,15 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
         return $body;
     }
 
+    // Lalamove nests order/driver/wallet data under data.order / data.driver / data.balance;
+    // stops carry no stable id, so POD/POP/deliveryCode events resolve the array index instead.
+
     private function dispatchOrderStatusChanged(array $payload): void
     {
-        $raw    = $payload['data'] ?? [];
-        $status = $raw['status'] ?? '';
+        $order  = $payload['data']['order'] ?? [];
+        $status = $order['status'] ?? '';
         event(new OrderStatusChanged(
-            orderId:      $raw['orderId']  ?? '',
+            orderId:      $order['orderId'] ?? '',
             status:       $status,
             mappedStatus: TrackingMapper::mapStatus($status),
             raw:          $payload,
@@ -232,23 +264,124 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
 
     private function dispatchDriverAssigned(array $payload): void
     {
-        $raw = $payload['data'] ?? [];
+        $data = $payload['data'] ?? [];
         event(new DriverAssigned(
-            orderId:    $raw['orderId']  ?? '',
-            driverId:   $raw['driverId'] ?? '',
-            driverInfo: $raw['driver']   ?? [],
+            orderId:    $data['order']['orderId']    ?? '',
+            driverId:   $data['driver']['driverId']  ?? '',
+            driverInfo: $data['driver']               ?? [],
+            raw:        $payload,
+        ));
+    }
+
+    private function dispatchOrderAmountChanged(array $payload): void
+    {
+        $order = $payload['data']['order'] ?? [];
+        $price = $order['price'] ?? [];
+        event(new OrderAmountChanged(
+            orderId:     $order['orderId']     ?? '',
+            totalPrice:  $price['totalPrice']  ?? '',
+            priorityFee: $price['priorityFee'] ?? '',
+            currency:    $price['currency']    ?? '',
+            raw:         $payload,
+        ));
+    }
+
+    private function dispatchOrderReplaced(array $payload): void
+    {
+        $data = $payload['data'] ?? [];
+        event(new OrderReplaced(
+            orderId:         $data['order']['orderId'] ?? '',
+            previousOrderId: $data['prevOrderId']       ?? '',
+            raw:             $payload,
+        ));
+    }
+
+    private function dispatchWalletBalanceChanged(array $payload): void
+    {
+        $balance = $payload['data']['balance'] ?? [];
+        event(new WalletBalanceChanged(
+            amount:   $balance['amount']   ?? '',
+            currency: $balance['currency'] ?? '',
+            raw:      $payload,
+        ));
+    }
+
+    private function dispatchOrderEdited(array $payload): void
+    {
+        $data = $payload['data'] ?? [];
+        event(new OrderEdited(
+            orderId:    $data['order']['orderId'] ?? '',
+            editReason: $data['editReason']       ?? '',
+            editParty:  $data['editParty']        ?? '',
             raw:        $payload,
         ));
     }
 
     private function dispatchPodStatusChanged(array $payload): void
     {
-        $raw = $payload['data'] ?? [];
+        $order = $payload['data']['order'] ?? [];
+        $stops = $order['stops'] ?? [];
+        $index = $this->findStopIndex($stops, fn (array $stop) => isset($stop['POD']));
+
         event(new PodStatusChanged(
-            orderId:   $raw['orderId']   ?? '',
-            stopId:    $raw['stopId']    ?? '',
-            podStatus: $raw['podStatus'] ?? '',
+            orderId:   $order['orderId'] ?? '',
+            stopId:    $index !== null ? (string) $index : '',
+            podStatus: $index !== null ? ($stops[$index]['POD']['status'] ?? '') : '',
             raw:       $payload,
         ));
+    }
+
+    private function dispatchPopStatusChanged(array $payload): void
+    {
+        $order = $payload['data']['order'] ?? [];
+        $stops = $order['stops'] ?? [];
+        $index = $this->findStopIndex($stops, fn (array $stop) => isset($stop['POP']));
+
+        event(new PopStatusChanged(
+            orderId: $order['orderId'] ?? '',
+            stopId:  $index !== null ? (string) $index : '',
+            raw:     $payload,
+        ));
+    }
+
+    private function dispatchDeliveryCodeStatusChanged(array $payload): void
+    {
+        $order = $payload['data']['order'] ?? [];
+        $stops = $order['stops'] ?? [];
+        $index = $this->findStopIndex(
+            $stops,
+            fn (array $stop) => ($stop['deliveryCode']['status'] ?? 'Not Applicable') !== 'Not Applicable'
+        );
+        $deliveryCode = $index !== null ? ($stops[$index]['deliveryCode'] ?? []) : [];
+
+        event(new DeliveryCodeStatusChanged(
+            orderId:            $order['orderId']       ?? '',
+            stopId:             $index !== null ? (string) $index : '',
+            deliveryCodeStatus: $deliveryCode['status']  ?? '',
+            deliveryCodeValue:  $deliveryCode['value']   ?? '',
+            raw:                $payload,
+        ));
+    }
+
+    private function dispatchOrderCreated(array $payload): void
+    {
+        $order = $payload['data']['order'] ?? [];
+        event(new OrderCreated(
+            orderId: $order['orderId'] ?? '',
+            market:  $order['market']  ?? '',
+            raw:     $payload,
+        ));
+    }
+
+    /** @param array<int, array<string, mixed>> $stops */
+    private function findStopIndex(array $stops, callable $predicate): ?int
+    {
+        foreach ($stops as $index => $stop) {
+            if ($predicate($stop)) {
+                return $index;
+            }
+        }
+
+        return null;
     }
 }

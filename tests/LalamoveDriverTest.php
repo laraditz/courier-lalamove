@@ -21,7 +21,7 @@ class LalamoveDriverTest extends TestCase
 {
     private function config(): array
     {
-        return ['key' => 'pk_test', 'secret' => 'sk_test', 'sandbox' => true, 'market' => 'MY', 'webhook_secret' => 'secret'];
+        return ['key' => 'pk_test', 'secret' => 'sk_test', 'sandbox' => true, 'market' => 'MY'];
     }
 
     private function makeAddress(): Address
