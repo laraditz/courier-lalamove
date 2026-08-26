@@ -113,4 +113,40 @@ class LalamoveClientTest extends TestCase
 
         Http::assertSent(fn ($r) => str_ends_with(rtrim($r->url(), '/'), '/v3/quotations') && $r->method() === 'POST');
     }
+
+    public function test_get_quotation_calls_correct_endpoint(): void
+    {
+        Http::fake(['*/v3/quotations/QUO123' => Http::response(['data' => []], 200)]);
+
+        $this->makeClient()->getQuotation('QUO123');
+
+        Http::assertSent(fn ($r) => str_ends_with(rtrim($r->url(), '/'), '/v3/quotations/QUO123') && $r->method() === 'GET');
+    }
+
+    public function test_edit_order_patches_correct_endpoint_with_stops(): void
+    {
+        Http::fake(['*/v3/orders/ORD123' => Http::response(['data' => []], 200)]);
+
+        $stops = [['address' => 'A'], ['address' => 'B']];
+        $this->makeClient()->editOrder('ORD123', $stops);
+
+        Http::assertSent(function ($r) use ($stops) {
+            return str_ends_with(rtrim($r->url(), '/'), '/v3/orders/ORD123')
+                && $r->method() === 'PATCH'
+                && $r->data()['data']['stops'] === $stops;
+        });
+    }
+
+    public function test_set_webhook_url_patches_correct_endpoint(): void
+    {
+        Http::fake(['*/v3/webhook' => Http::response(['data' => ['url' => 'https://example.com']], 200)]);
+
+        $this->makeClient()->setWebhookUrl('https://example.com');
+
+        Http::assertSent(function ($r) {
+            return str_ends_with(rtrim($r->url(), '/'), '/v3/webhook')
+                && $r->method() === 'PATCH'
+                && $r->data()['data']['url'] === 'https://example.com';
+        });
+    }
 }

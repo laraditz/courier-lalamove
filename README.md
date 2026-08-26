@@ -150,8 +150,19 @@ $lalamove->removeDriver($orderId, $driverId);
 // Add a priority fee
 $lalamove->addPriorityFee($orderId, ['amount' => '10', 'currency' => 'MYR']);
 
-// Edit a stop
-$lalamove->editStop($orderId, $stopId, ['address' => '...', 'coordinates' => [...]]);
+// Retrieve a quotation (e.g. to inspect its stops before placing an order)
+$quotation = $lalamove->getQuotation($quotationId);
+
+// Edit an order's stops — replaces the entire stops array in one call; Lalamove
+// allows this once per order, only while status is ONGOING, and the pickup stop's
+// values must stay identical to the original
+$lalamove->editOrder($orderId, [
+    ['coordinates' => ['lat' => '3.139', 'lng' => '101.686'], 'address' => '...', 'name' => 'Sender', 'phone' => '+60123456789'],
+    ['coordinates' => ['lat' => '3.085', 'lng' => '101.532'], 'address' => '...', 'name' => 'New Recipient', 'phone' => '+60123456780'],
+]);
+
+// Register/update the webhook URL Lalamove pushes events to
+$lalamove->setWebhookUrl('https://your-app.test/courier/webhook/lalamove');
 ```
 
 ## Webhooks

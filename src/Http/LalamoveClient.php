@@ -26,6 +26,11 @@ class LalamoveClient
         return $this->post('/v3/quotations', $body);
     }
 
+    public function getQuotation(string $quotationId): array
+    {
+        return $this->get("/v3/quotations/{$quotationId}");
+    }
+
     public function createOrder(array $body): array
     {
         return $this->post('/v3/orders', $body);
@@ -61,9 +66,17 @@ class LalamoveClient
         return $this->get("/v3/orders/{$orderId}/drivers/{$driverId}");
     }
 
-    public function editStop(string $orderId, string $stopId, array $body): array
+    // Lalamove has no per-stop endpoint: editing replaces the entire stops array in
+    // one PATCH, is allowed once per order, only while status is ONGOING, and the
+    // pickup stop's values must stay identical to the original.
+    public function editOrder(string $orderId, array $stops): array
     {
-        return $this->put("/v3/orders/{$orderId}/stops/{$stopId}", $body);
+        return $this->patch("/v3/orders/{$orderId}", ['stops' => $stops]);
+    }
+
+    public function setWebhookUrl(string $url): array
+    {
+        return $this->patch('/v3/webhook', ['url' => $url]);
     }
 
     // ── Transport ────────────────────────────────────────────────────────
@@ -78,12 +91,12 @@ class LalamoveClient
         return $this->handleResponse($response);
     }
 
-    private function put(string $path, array $body): array
+    private function patch(string $path, array $body): array
     {
         $json     = json_encode(['data' => $body], JSON_THROW_ON_ERROR);
-        $response = Http::withHeaders($this->headers('PUT', $path, $json))
+        $response = Http::withHeaders($this->headers('PATCH', $path, $json))
             ->withBody($json, 'application/json')
-            ->put($this->baseUrl() . $path);
+            ->patch($this->baseUrl() . $path);
 
         return $this->handleResponse($response);
     }

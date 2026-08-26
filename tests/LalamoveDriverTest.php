@@ -36,7 +36,17 @@ class LalamoveDriverTest extends TestCase
 
     private function quotationResponse(): array
     {
-        return ['data' => ['quotationId' => 'QUO-001', 'expiresAt' => '2026-06-20T10:05:00Z', 'priceBreakdown' => ['total' => '10.00', 'currency' => 'MYR']]];
+        return [
+            'data' => [
+                'quotationId'    => 'QUO-001',
+                'expiresAt'      => '2026-06-20T10:05:00Z',
+                'priceBreakdown' => ['total' => '10.00', 'currency' => 'MYR'],
+                'stops'          => [
+                    ['stopId' => 'STOP-1', 'coordinates' => ['lat' => '3.139', 'lng' => '101.686'], 'address' => 'KL'],
+                    ['stopId' => 'STOP-2', 'coordinates' => ['lat' => '3.085', 'lng' => '101.532'], 'address' => 'Shah Alam'],
+                ],
+            ],
+        ];
     }
 
     private function orderResponse(): array
@@ -83,11 +93,22 @@ class LalamoveDriverTest extends TestCase
         $this->assertInstanceOf(ShipmentResult::class, $result);
         $this->assertSame('ORD-001', $result->waybillNumber);
         Http::assertSentCount(2);
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), '/v3/orders') || $request->method() !== 'POST') {
+                return true;
+            }
+            $data = $request->data()['data'];
+            return $data['sender']['stopId'] === 'STOP-1'
+                && $data['recipients'][0]['stopId'] === 'STOP-2';
+        });
     }
 
-    public function test_create_shipment_skips_quotation_when_id_provided(): void
+    public function test_create_shipment_reuses_quotation_id_via_lookup(): void
     {
-        Http::fake(['*/v3/orders' => Http::response($this->orderResponse(), 201)]);
+        Http::fake([
+            '*/v3/quotations/QUO-REUSED' => Http::response($this->quotationResponse(), 200),
+            '*/v3/orders'                => Http::response($this->orderResponse(), 201),
+        ]);
 
         $driver = (new LalamoveDriver($this->config()))->withQuotationId('QUO-REUSED');
         $driver->createShipment(new ShipmentPayload(
@@ -95,7 +116,10 @@ class LalamoveDriverTest extends TestCase
             parcel: $this->makeParcel(), serviceCode: 'MOTORCYCLE',
         ));
 
-        Http::assertSentCount(1);  // only order creation, no quotation
+        // No new quotation is created, but the existing one is looked up to resolve
+        // the stopIds that order creation requires.
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/v3/quotations/QUO-REUSED') && $request->method() === 'GET');
     }
 
     // ── track ─────────────────────────────────────────────────────────────

@@ -80,15 +80,25 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
         if ($quotationId === null) {
             $quotationResponse = $this->client->createQuotation($this->buildShipmentQuotationBody($payload));
             $quotationId       = $quotationResponse['data']['quotationId'];
+        } else {
+            // A reused quotationId (via withQuotationId()) was never fetched by this
+            // instance, so its stops/stopId values — required below — are unknown yet.
+            $quotationResponse = $this->client->getQuotation($quotationId);
         }
+
+        // Lalamove requires sender/recipients to reference the quotation's own stopId
+        // per stop; buildShipmentQuotationBody() always orders stops [sender, recipient].
+        $stops = $quotationResponse['data']['stops'] ?? [];
 
         $orderResponse = $this->client->createOrder([
             'quotationId' => $quotationId,
             'sender'      => [
-                'name'  => $payload->sender->name,
-                'phone' => $payload->sender->phone ?? '',
+                'stopId' => $stops[0]['stopId'] ?? '',
+                'name'   => $payload->sender->name,
+                'phone'  => $payload->sender->phone ?? '',
             ],
             'recipients'  => [[
+                'stopId'  => $stops[1]['stopId'] ?? '',
                 'name'    => $payload->recipient->name,
                 'phone'   => $payload->recipient->phone ?? '',
                 'remarks' => $payload->remarks ?? '',
@@ -198,9 +208,20 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks
         return $this->client->getDriverLocation($orderId, $driverId);
     }
 
-    public function editStop(string $orderId, string $stopId, array $body): array
+    public function getQuotation(string $quotationId): array
     {
-        return $this->client->editStop($orderId, $stopId, $body);
+        return $this->client->getQuotation($quotationId);
+    }
+
+    // Replaces every stop in one call (no per-stop endpoint exists); once per order, only while ONGOING, pickup values must stay identical.
+    public function editOrder(string $orderId, array $stops): array
+    {
+        return $this->client->editOrder($orderId, $stops);
+    }
+
+    public function setWebhookUrl(string $url): array
+    {
+        return $this->client->setWebhookUrl($url);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────
