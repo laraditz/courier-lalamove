@@ -8,6 +8,8 @@ use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
 use Laraditz\Courier\DTOs\Results\CancelResult;
+use Laraditz\Courier\DTOs\Results\DriverLocationResult;
+use Laraditz\Courier\DTOs\Results\QuotationResult;
 use Laraditz\Courier\DTOs\Results\RateCollection;
 use Laraditz\Courier\DTOs\Results\ServiceCollection;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
@@ -15,6 +17,7 @@ use Laraditz\Courier\DTOs\Results\TrackingResult;
 use Laraditz\Courier\DTOs\Shared\Address;
 use Laraditz\Courier\DTOs\Shared\Location;
 use Laraditz\Courier\DTOs\Shared\Parcel;
+use Laraditz\Courier\Enums\DeliveryMode;
 use Laraditz\Courier\Exceptions\UnsupportedOperationException;
 use Laraditz\Courier\Lalamove\LalamoveDriver;
 
@@ -229,5 +232,70 @@ class LalamoveDriverTest extends TestCase
 
         $this->assertNull($reference['reference']);
         $this->assertNull($reference['waybillNumber']);
+    }
+
+    // ── getDeliveryModes ─────────────────────────────────────────────────
+
+    public function test_get_delivery_modes_returns_on_demand(): void
+    {
+        $modes = (new LalamoveDriver($this->config()))->getDeliveryModes();
+        $this->assertSame([DeliveryMode::OnDemand], $modes);
+    }
+
+    // ── getQuotation (LooksUpQuotations) ─────────────────────────────────
+
+    public function test_get_quotation_returns_quotation_result(): void
+    {
+        Http::fake(['*/v3/quotations/QUO-001' => Http::response($this->quotationResponse(), 200)]);
+
+        $result = (new LalamoveDriver($this->config()))->getQuotation('QUO-001');
+
+        $this->assertInstanceOf(QuotationResult::class, $result);
+        $this->assertSame('QUO-001', $result->quotationId);
+        $this->assertSame(10.00, $result->price);
+        $this->assertSame('MYR', $result->currency);
+    }
+
+    // ── getDriverLocation (TracksDriverLocation) ─────────────────────────
+
+    public function test_get_driver_location_returns_driver_location_result(): void
+    {
+        Http::fake(['*/v3/orders/ORD-001/drivers/DRV-1' => Http::response([
+            'data' => [
+                'driverId'    => 'DRV-1',
+                'coordinates' => ['lat' => '13.740167', 'lng' => '100.535237', 'updatedAt' => '2021-12-01T14:30:00Z'],
+            ],
+        ], 200)]);
+
+        $result = (new LalamoveDriver($this->config()))->getDriverLocation('ORD-001', 'DRV-1');
+
+        $this->assertInstanceOf(DriverLocationResult::class, $result);
+        $this->assertSame('DRV-1', $result->driverId);
+        $this->assertSame(13.740167, $result->lat);
+        $this->assertSame(100.535237, $result->lng);
+    }
+
+    // ── editOrder (SupportsOrderEditing) ─────────────────────────────────
+
+    public function test_edit_order_maps_addresses_to_stops_and_returns_shipment_result(): void
+    {
+        Http::fake(['*/v3/orders/ORD-001' => Http::response($this->orderResponse(), 200)]);
+
+        $result = (new LalamoveDriver($this->config()))->editOrder('ORD-001', [
+            $this->makeAddress(),
+            $this->makeAddress(),
+        ]);
+
+        $this->assertInstanceOf(ShipmentResult::class, $result);
+        $this->assertSame('ORD-001', $result->waybillNumber);
+        Http::assertSent(function ($r) {
+            if ($r->method() !== 'PATCH') {
+                return true;
+            }
+            $stops = $r->data()['data']['stops'];
+            return count($stops) === 2
+                && $stops[0]['address'] === 'Line 1, KL'
+                && $stops[0]['coordinates']['lat'] === '3.139';
+        });
     }
 }

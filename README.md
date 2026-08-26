@@ -138,28 +138,51 @@ $services = $lalamove->getAvailability(new AvailabilityPayload());
 $sgDriver = $lalamove->market('SG');
 ```
 
-### Lalamove-specific operations
+### Delivery modes
+
+Lalamove is on-demand only (auto-assigns a nearby driver — no scheduled next-day option):
 
 ```php
+$lalamove->getDeliveryModes(); // [DeliveryMode::OnDemand]
+```
+
+### Capability interfaces
+
+Beyond the base `CourierDriver` contract, `LalamoveDriver` implements four optional `laraditz/courier` capability interfaces, so calling code can type-check against the interface instead of reaching into `LalamoveDriver` directly:
+
+| Interface | Method |
+|---|---|
+| `ManagesAssignedDriver` | `removeDriver(string $orderId, string $driverId): void` |
+| `LooksUpQuotations` | `getQuotation(string $quotationId): QuotationResult` |
+| `TracksDriverLocation` | `getDriverLocation(string $orderId, string $driverId): DriverLocationResult` |
+| `SupportsOrderEditing` | `editOrder(string $orderId, Address[] $stops): ShipmentResult` |
+
+```php
+use Laraditz\Courier\DTOs\Shared\Address;
+
 // Get live driver location
-$location = $lalamove->getDriverLocation($orderId, $driverId);
+$location = $lalamove->getDriverLocation($orderId, $driverId); // DriverLocationResult
 
 // Remove the assigned driver
 $lalamove->removeDriver($orderId, $driverId);
 
-// Add a priority fee
-$lalamove->addPriorityFee($orderId, ['amount' => '10', 'currency' => 'MYR']);
-
 // Retrieve a quotation (e.g. to inspect its stops before placing an order)
-$quotation = $lalamove->getQuotation($quotationId);
+$quotation = $lalamove->getQuotation($quotationId); // QuotationResult
 
 // Edit an order's stops — replaces the entire stops array in one call; Lalamove
 // allows this once per order, only while status is ONGOING, and the pickup stop's
 // values must stay identical to the original
 $lalamove->editOrder($orderId, [
-    ['coordinates' => ['lat' => '3.139', 'lng' => '101.686'], 'address' => '...', 'name' => 'Sender', 'phone' => '+60123456789'],
-    ['coordinates' => ['lat' => '3.085', 'lng' => '101.532'], 'address' => '...', 'name' => 'New Recipient', 'phone' => '+60123456780'],
-]);
+    new Address('Sender', '+60123456789', null, 'Line 1', null, null, 'KL', 'WP', '50000', 'MY', lat: 3.139, lng: 101.686),
+    new Address('New Recipient', '+60123456780', null, 'Line 2', null, null, 'Shah Alam', 'Selangor', '40150', 'MY', lat: 3.085, lng: 101.532),
+]); // ShipmentResult
+```
+
+### Other Lalamove-specific operations
+
+```php
+// Add a priority fee
+$lalamove->addPriorityFee($orderId, ['amount' => '10', 'currency' => 'MYR']);
 
 // Register/update the webhook URL Lalamove pushes events to
 $lalamove->setWebhookUrl('https://your-app.test/courier/webhook/lalamove');

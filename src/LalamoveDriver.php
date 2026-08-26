@@ -6,15 +6,23 @@ use Illuminate\Http\Request;
 use Laraditz\Courier\Contracts\CourierDriver;
 use Laraditz\Courier\Contracts\ExtractsWebhookReference;
 use Laraditz\Courier\Contracts\HandlesWebhooks;
+use Laraditz\Courier\Contracts\LooksUpQuotations;
+use Laraditz\Courier\Contracts\ManagesAssignedDriver;
+use Laraditz\Courier\Contracts\SupportsOrderEditing;
+use Laraditz\Courier\Contracts\TracksDriverLocation;
 use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
 use Laraditz\Courier\DTOs\Results\CancelResult;
+use Laraditz\Courier\DTOs\Results\DriverLocationResult;
 use Laraditz\Courier\DTOs\Results\LabelResult;
+use Laraditz\Courier\DTOs\Results\QuotationResult;
 use Laraditz\Courier\DTOs\Results\RateCollection;
 use Laraditz\Courier\DTOs\Results\ServiceCollection;
 use Laraditz\Courier\DTOs\Results\ShipmentResult;
 use Laraditz\Courier\DTOs\Results\TrackingResult;
+use Laraditz\Courier\DTOs\Shared\Address;
+use Laraditz\Courier\Enums\DeliveryMode;
 use Laraditz\Courier\Lalamove\Events\DeliveryCodeStatusChanged;
 use Laraditz\Courier\Lalamove\Events\DriverAssigned;
 use Laraditz\Courier\Lalamove\Events\OrderAmountChanged;
@@ -28,12 +36,21 @@ use Laraditz\Courier\Lalamove\Events\WalletBalanceChanged;
 use Laraditz\Courier\Lalamove\Http\LalamoveClient;
 use Laraditz\Courier\Lalamove\Mappers\AvailabilityMapper;
 use Laraditz\Courier\Lalamove\Mappers\CancelMapper;
+use Laraditz\Courier\Lalamove\Mappers\DriverLocationMapper;
 use Laraditz\Courier\Lalamove\Mappers\LabelMapper;
+use Laraditz\Courier\Lalamove\Mappers\QuotationMapper;
 use Laraditz\Courier\Lalamove\Mappers\RateMapper;
 use Laraditz\Courier\Lalamove\Mappers\ShipmentMapper;
 use Laraditz\Courier\Lalamove\Mappers\TrackingMapper;
 
-class LalamoveDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhookReference
+class LalamoveDriver implements
+    CourierDriver,
+    HandlesWebhooks,
+    ExtractsWebhookReference,
+    ManagesAssignedDriver,
+    LooksUpQuotations,
+    TracksDriverLocation,
+    SupportsOrderEditing
 {
     private LalamoveClient $client;
     private ?string $quotationId = null;
@@ -143,6 +160,11 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhookR
         return AvailabilityMapper::map($response);
     }
 
+    public function getDeliveryModes(): array
+    {
+        return [DeliveryMode::OnDemand];
+    }
+
     // ── HandlesWebhooks ───────────────────────────────────────────────────
 
     public function verifyWebhook(Request $request): bool
@@ -215,20 +237,22 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhookR
         return $this->client->addPriorityFee($orderId, $body);
     }
 
-    public function getDriverLocation(string $orderId, string $driverId): array
+    public function getDriverLocation(string $orderId, string $driverId): DriverLocationResult
     {
-        return $this->client->getDriverLocation($orderId, $driverId);
+        return DriverLocationMapper::map($this->client->getDriverLocation($orderId, $driverId));
     }
 
-    public function getQuotation(string $quotationId): array
+    public function getQuotation(string $quotationId): QuotationResult
     {
-        return $this->client->getQuotation($quotationId);
+        return QuotationMapper::map($this->client->getQuotation($quotationId));
     }
 
     // Replaces every stop in one call (no per-stop endpoint exists); once per order, only while ONGOING, pickup values must stay identical.
-    public function editOrder(string $orderId, array $stops): array
+    /** @param Address[] $stops */
+    public function editOrder(string $orderId, array $stops): ShipmentResult
     {
-        return $this->client->editOrder($orderId, $stops);
+        $rawStops = array_map($this->addressToStop(...), $stops);
+        return ShipmentMapper::map($this->client->editOrder($orderId, $rawStops));
     }
 
     public function setWebhookUrl(string $url): array
@@ -261,16 +285,7 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhookR
         $body = [
             'serviceType' => $payload->serviceCode,
             'language'    => 'en_MY',
-            'stops'       => [
-                [
-                    'coordinates' => ['lat' => (string) $payload->sender->lat, 'lng' => (string) $payload->sender->lng],
-                    'address'     => implode(', ', array_filter([$payload->sender->line1, $payload->sender->city])),
-                ],
-                [
-                    'coordinates' => ['lat' => (string) $payload->recipient->lat, 'lng' => (string) $payload->recipient->lng],
-                    'address'     => implode(', ', array_filter([$payload->recipient->line1, $payload->recipient->city])),
-                ],
-            ],
+            'stops'       => array_map($this->addressToStop(...), [$payload->sender, $payload->recipient]),
         ];
 
         if ($payload->scheduledAt !== null) {
@@ -278,6 +293,14 @@ class LalamoveDriver implements CourierDriver, HandlesWebhooks, ExtractsWebhookR
         }
 
         return $body;
+    }
+
+    private function addressToStop(Address $address): array
+    {
+        return [
+            'coordinates' => ['lat' => (string) $address->lat, 'lng' => (string) $address->lng],
+            'address'     => implode(', ', array_filter([$address->line1, $address->city])),
+        ];
     }
 
     // Lalamove nests order/driver/wallet data under data.order / data.driver / data.balance;
