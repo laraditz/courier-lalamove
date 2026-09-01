@@ -96,12 +96,12 @@ class LalamoveDriver implements
         $quotationId = $this->quotationId;
 
         if ($quotationId === null) {
-            $quotationResponse = $this->client->createQuotation($this->buildShipmentQuotationBody($payload));
+            $quotationResponse = $this->client->createQuotation($this->buildShipmentQuotationBody($payload), $payload->reference);
             $quotationId       = $quotationResponse['data']['quotationId'];
         } else {
             // A reused quotationId (via withQuotationId()) was never fetched by this
             // instance, so its stops/stopId values — required below — are unknown yet.
-            $quotationResponse = $this->client->getQuotation($quotationId);
+            $quotationResponse = $this->client->getQuotation($quotationId, $payload->reference);
         }
 
         // Lalamove requires sender/recipients to reference the quotation's own stopId
@@ -121,7 +121,7 @@ class LalamoveDriver implements
                 'phone'   => $payload->recipient->phone ?? '',
                 'remarks' => $payload->remarks ?? '',
             ]],
-        ]);
+        ], $payload->reference);
 
         return ShipmentMapper::map($orderResponse);
     }
@@ -142,7 +142,7 @@ class LalamoveDriver implements
     public function cancelShipment(string $waybillNumber, ?string $reference = null): CancelResult
     {
         try {
-            $this->client->cancelOrder($waybillNumber);
+            $this->client->cancelOrder($waybillNumber, $reference);
             return CancelMapper::map(204);
         } catch (\Laraditz\Courier\Exceptions\CancellationException $e) {
             return CancelMapper::map(409, ['message' => $e->getMessage()]);

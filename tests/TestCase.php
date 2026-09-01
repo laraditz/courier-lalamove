@@ -15,4 +15,12 @@ class TestCase extends Orchestra
             LalamoveServiceProvider::class,
         ];
     }
+
+    // courier_api_logs and courier_webhook_logs live in the core package. Without
+    // them, ApiLogWriter's catch (Throwable) turns every failed write into a silent
+    // Log::error and the suite goes green while logging nothing at all.
+    protected function defineDatabaseMigrations(): void
+    {
+        $this->loadMigrationsFrom(__DIR__.'/../vendor/laraditz/courier/database/migrations');
+    }
 }

@@ -2,15 +2,23 @@
 
 namespace Laraditz\Courier\Lalamove\Http;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Laraditz\Courier\Exceptions\AuthenticationException;
 use Laraditz\Courier\Exceptions\CancellationException;
 use Laraditz\Courier\Exceptions\CourierException;
+use Laraditz\Courier\Http\CourierHttpClient;
 
 class LalamoveClient
 {
-    public function __construct(private array $config) {}  // NOT readonly — withMarket() needs to mutate the clone
+    private CourierHttpClient $http;
+
+    // $config is NOT readonly — withMarket() needs to mutate the clone.
+    // CourierHttpClient is not container-bound, so constructing one here is correct;
+    // the parameter exists so tests can inject their own.
+    public function __construct(private array $config, ?CourierHttpClient $http = null)
+    {
+        $this->http = $http ?? new CourierHttpClient();
+    }
 
     public function withMarket(string $market): static
     {
@@ -21,49 +29,49 @@ class LalamoveClient
 
     // ── Named API methods ────────────────────────────────────────────────
 
-    public function createQuotation(array $body): array
+    public function createQuotation(array $body, ?string $reference = null): array
     {
-        return $this->post('/v3/quotations', $body);
+        return $this->post('/v3/quotations', $body, 'create_quotation', reference: $reference);
     }
 
-    public function getQuotation(string $quotationId): array
+    public function getQuotation(string $quotationId, ?string $reference = null): array
     {
-        return $this->get("/v3/quotations/{$quotationId}");
+        return $this->get("/v3/quotations/{$quotationId}", 'get_quotation', reference: $reference);
     }
 
-    public function createOrder(array $body): array
+    public function createOrder(array $body, ?string $reference = null): array
     {
-        return $this->post('/v3/orders', $body);
+        return $this->post('/v3/orders', $body, 'create_order', reference: $reference);
     }
 
     public function getOrder(string $orderId): array
     {
-        return $this->get("/v3/orders/{$orderId}");
+        return $this->get("/v3/orders/{$orderId}", 'get_order', $orderId);
     }
 
-    public function cancelOrder(string $orderId): void
+    public function cancelOrder(string $orderId, ?string $reference = null): void
     {
-        $this->delete("/v3/orders/{$orderId}");
+        $this->delete("/v3/orders/{$orderId}", 'cancel_order', $orderId, $reference);
     }
 
     public function getCities(): array
     {
-        return $this->get('/v3/cities');
+        return $this->get('/v3/cities', 'get_cities');
     }
 
     public function removeDriver(string $orderId, string $driverId): void
     {
-        $this->delete("/v3/orders/{$orderId}/drivers/{$driverId}");
+        $this->delete("/v3/orders/{$orderId}/drivers/{$driverId}", 'remove_driver', $orderId);
     }
 
     public function addPriorityFee(string $orderId, array $body): array
     {
-        return $this->post("/v3/orders/{$orderId}/priority-fee", $body);
+        return $this->post("/v3/orders/{$orderId}/priority-fee", $body, 'add_priority_fee', $orderId);
     }
 
     public function getDriverLocation(string $orderId, string $driverId): array
     {
-        return $this->get("/v3/orders/{$orderId}/drivers/{$driverId}");
+        return $this->get("/v3/orders/{$orderId}/drivers/{$driverId}", 'get_driver_location', $orderId);
     }
 
     // Lalamove has no per-stop endpoint: editing replaces the entire stops array in
@@ -71,48 +79,63 @@ class LalamoveClient
     // pickup stop's values must stay identical to the original.
     public function editOrder(string $orderId, array $stops): array
     {
-        return $this->patch("/v3/orders/{$orderId}", ['stops' => $stops]);
+        return $this->patch("/v3/orders/{$orderId}", ['stops' => $stops], 'edit_order', $orderId);
     }
 
     public function setWebhookUrl(string $url): array
     {
-        return $this->patch('/v3/webhook', ['url' => $url]);
+        return $this->patch('/v3/webhook', ['url' => $url], 'set_webhook_url');
     }
 
     // ── Transport ────────────────────────────────────────────────────────
 
-    private function post(string $path, array $body): array
+    // $json is the signature input only — CourierHttpClient takes the array and lets
+    // Guzzle encode it. Guzzle uses json_encode($value, 0, 512); JSON_THROW_ON_ERROR
+    // changes error handling, not output, so the two are byte-identical. HmacSignatureTest
+    // pins that: if it ever stops holding, every call 401s for a non-obvious reason.
+    private function post(string $path, array $body, string $action, ?string $waybillNumber = null, ?string $reference = null): array
     {
-        $json      = json_encode(['data' => $body], JSON_THROW_ON_ERROR);
-        $response  = Http::withHeaders($this->headers('POST', $path, $json))
-            ->withBody($json, 'application/json')
-            ->post($this->baseUrl() . $path);
+        $payload = ['data' => $body];
+        $json    = json_encode($payload, JSON_THROW_ON_ERROR);
+
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->post($this->baseUrl() . $path, $payload, $this->headers('POST', $path, $json));
 
         return $this->handleResponse($response);
     }
 
-    private function patch(string $path, array $body): array
+    private function patch(string $path, array $body, string $action, ?string $waybillNumber = null, ?string $reference = null): array
     {
-        $json     = json_encode(['data' => $body], JSON_THROW_ON_ERROR);
-        $response = Http::withHeaders($this->headers('PATCH', $path, $json))
-            ->withBody($json, 'application/json')
-            ->patch($this->baseUrl() . $path);
+        $payload = ['data' => $body];
+        $json    = json_encode($payload, JSON_THROW_ON_ERROR);
+
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->patch($this->baseUrl() . $path, $payload, $this->headers('PATCH', $path, $json));
 
         return $this->handleResponse($response);
     }
 
-    private function get(string $path): array
+    // forLog() is called on every request, immediately before the verb. It mutates
+    // and returns $this, and leaves configured = true, so an inherited context would
+    // log silently against the previous call's action. Never rely on it persisting.
+    private function get(string $path, string $action, ?string $waybillNumber = null, ?string $reference = null): array
     {
-        $response = Http::withHeaders($this->headers('GET', $path, ''))
-            ->get($this->baseUrl() . $path);
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->get($this->baseUrl() . $path, [], $this->headers('GET', $path, ''));
 
         return $this->handleResponse($response);
     }
 
-    private function delete(string $path): void
+    // Lalamove returns no body here; CourierHttpClient logs it fine, response_body
+    // just ends up empty.
+    private function delete(string $path, string $action, ?string $waybillNumber = null, ?string $reference = null): void
     {
-        $response = Http::withHeaders($this->headers('DELETE', $path, ''))
-            ->delete($this->baseUrl() . $path);
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->delete($this->baseUrl() . $path, [], $this->headers('DELETE', $path, ''));
 
         $this->handleResponse($response, expectBody: false);
     }
