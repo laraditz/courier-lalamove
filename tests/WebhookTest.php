@@ -308,4 +308,42 @@ class WebhookTest extends TestCase
         $this->postJson(self::PATH, $payload)
             ->assertStatus(200);
     }
+
+    public function test_returns_200_for_unsigned_probe_when_verification_disabled(): void
+    {
+        // Lalamove's partner portal validates a webhook URL with an unsigned probe
+        // and will not save the URL unless it answers a plain 200.
+        config(['courier.drivers.lalamove.webhook_verify' => false]);
+
+        $this->postJson(self::PATH, ['eventType' => 'ORDER_STATUS_CHANGED', 'data' => []])
+            ->assertStatus(200);
+    }
+
+    public function test_still_rejects_invalid_signature_when_verification_enabled(): void
+    {
+        config(['courier.drivers.lalamove.webhook_verify' => true]);
+
+        $payload = $this->signedPayload('ORDER_STATUS_CHANGED', [
+            'order' => ['orderId' => 'ORD-001', 'status' => 'COMPLETED'],
+        ]);
+        $payload['signature'] = 'deadbeef';
+
+        $this->postJson(self::PATH, $payload)
+            ->assertStatus(401);
+    }
+
+    public function test_verification_stays_on_when_flag_absent_from_config(): void
+    {
+        // A published config/lalamove.php predating this switch has no such key;
+        // a missing key must never be read as "verification off".
+        config(['courier.drivers.lalamove' => ['secret' => self::SECRET]]);
+
+        $payload = $this->signedPayload('ORDER_STATUS_CHANGED', [
+            'order' => ['orderId' => 'ORD-001', 'status' => 'COMPLETED'],
+        ]);
+        $payload['signature'] = 'deadbeef';
+
+        $this->postJson(self::PATH, $payload)
+            ->assertStatus(401);
+    }
 }

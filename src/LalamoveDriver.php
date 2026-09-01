@@ -169,6 +169,14 @@ class LalamoveDriver implements
 
     public function verifyWebhook(Request $request): bool
     {
+        // Registration mode: the Lalamove partner portal probes a new webhook URL
+        // unsigned and refuses to save it unless the URL answers a plain 200. Flip
+        // LALAMOVE_WEBHOOK_VERIFY off just long enough to register, then back on —
+        // while it is off, every webhook is accepted without a signature check.
+        if (!($this->config['webhook_verify'] ?? true)) {
+            return true;
+        }
+
         $secret = $this->config['secret'] ?? null;
 
         if ($secret === null) {

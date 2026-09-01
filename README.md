@@ -44,6 +44,9 @@ Then register the driver in `config/courier.php` (or however your `laraditz/cour
         'secret'  => env('LALAMOVE_API_SECRET'),
         'sandbox' => env('LALAMOVE_SANDBOX', false),
         'market'  => env('LALAMOVE_MARKET', 'MY'),
+
+        // Optional; defaults to true. See "Registering the webhook URL" below.
+        'webhook_verify' => env('LALAMOVE_WEBHOOK_VERIFY', true),
     ],
 ],
 ```
@@ -199,6 +202,18 @@ HMAC-SHA256("{timestamp}\r\nPOST\r\n{webhook path}\r\n\r\n{json_encode(data)}", 
 and compares it (constant-time) against the `signature` field, using the same `LALAMOVE_API_SECRET` used for signing outgoing API requests.
 
 The driver also implements `ExtractsWebhookReference`, so if you're using `laraditz/courier`'s webhook audit logging, `courier_webhook_logs` rows are populated with `waybill_number` (Lalamove's `orderId`, taken from `data.order.orderId`) so logs stay queryable by shipment. `reference` is always `null` — Lalamove has no separate merchant reference field. `WALLET_BALANCE_CHANGED` events carry no order at all, so both fields stay `null` for that event type.
+
+### Registering the webhook URL
+
+The Lalamove partner portal validates a webhook URL before it will save it, by probing the URL with a request that carries no signature. Verification rejects that probe with a `401`, so registration fails. To get through it, turn verification off just long enough to register:
+
+```env
+LALAMOVE_WEBHOOK_VERIFY=false
+```
+
+Save the URL in the portal (or call `$lalamove->setWebhookUrl(...)`), then **remove the line or set it back to `true`**. It defaults to `true`, so verification is on unless you deliberately turn it off — and a config that predates this key keeps verifying.
+
+> **While the switch is off every webhook is accepted unverified** — anyone who knows the URL can post a forged event and it will be processed and dispatched as real. Keep the window as short as you can, and prefer doing it against sandbox credentials.
 
 Register a webhook route and delegate to the courier manager:
 
