@@ -194,4 +194,30 @@ class LalamoveClientTest extends TestCase
         $this->assertSame('set_webhook_url', $log->action);
         $this->assertSame('PATCH', $log->method);
     }
+
+    public function test_delete_logs_a_row_with_its_action_and_waybill(): void
+    {
+        Http::fake(['*' => Http::response('', 204)]);
+
+        $this->makeClient()->cancelOrder('ORD-001');
+
+        $log = CourierApiLog::sole();
+
+        $this->assertSame('cancel_order', $log->action);
+        $this->assertSame('DELETE', $log->method);
+        $this->assertSame('ORD-001', $log->waybill_number);
+        $this->assertTrue($log->successful);
+    }
+
+    public function test_remove_driver_logs_against_the_order(): void
+    {
+        Http::fake(['*' => Http::response('', 204)]);
+
+        $this->makeClient()->removeDriver('ORD-001', 'DRV-9');
+
+        $log = CourierApiLog::sole();
+
+        $this->assertSame('remove_driver', $log->action);
+        $this->assertSame('ORD-001', $log->waybill_number);
+    }
 }

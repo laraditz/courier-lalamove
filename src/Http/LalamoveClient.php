@@ -2,7 +2,6 @@
 
 namespace Laraditz\Courier\Lalamove\Http;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Laraditz\Courier\Exceptions\AuthenticationException;
 use Laraditz\Courier\Exceptions\CancellationException;
@@ -50,9 +49,9 @@ class LalamoveClient
         return $this->get("/v3/orders/{$orderId}", 'get_order', $orderId);
     }
 
-    public function cancelOrder(string $orderId): void
+    public function cancelOrder(string $orderId, ?string $reference = null): void
     {
-        $this->delete("/v3/orders/{$orderId}");
+        $this->delete("/v3/orders/{$orderId}", 'cancel_order', $orderId, $reference);
     }
 
     public function getCities(): array
@@ -62,7 +61,7 @@ class LalamoveClient
 
     public function removeDriver(string $orderId, string $driverId): void
     {
-        $this->delete("/v3/orders/{$orderId}/drivers/{$driverId}");
+        $this->delete("/v3/orders/{$orderId}/drivers/{$driverId}", 'remove_driver', $orderId);
     }
 
     public function addPriorityFee(string $orderId, array $body): array
@@ -130,10 +129,13 @@ class LalamoveClient
         return $this->handleResponse($response);
     }
 
-    private function delete(string $path): void
+    // Lalamove returns no body here; CourierHttpClient logs it fine, response_body
+    // just ends up empty.
+    private function delete(string $path, string $action, ?string $waybillNumber = null, ?string $reference = null): void
     {
-        $response = Http::withHeaders($this->headers('DELETE', $path, ''))
-            ->delete($this->baseUrl() . $path);
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->delete($this->baseUrl() . $path, [], $this->headers('DELETE', $path, ''));
 
         $this->handleResponse($response, expectBody: false);
     }
