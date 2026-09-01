@@ -142,7 +142,7 @@ class LalamoveDriver implements
     public function cancelShipment(string $waybillNumber, ?string $reference = null): CancelResult
     {
         try {
-            $this->client->cancelOrder($waybillNumber);
+            $this->client->cancelOrder($waybillNumber, $reference);
             return CancelMapper::map(204);
         } catch (\Laraditz\Courier\Exceptions\CancellationException $e) {
             return CancelMapper::map(409, ['message' => $e->getMessage()]);

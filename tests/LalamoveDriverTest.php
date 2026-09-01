@@ -350,4 +350,17 @@ class LalamoveDriverTest extends TestCase
         $this->assertSame(['get_quotation', 'create_order'], $logs->pluck('action')->all());
         $this->assertSame(['MERCHANT-REF-9', 'MERCHANT-REF-9'], $logs->pluck('reference')->all());
     }
+
+    public function test_cancel_shipment_threads_reference_and_waybill(): void
+    {
+        Http::fake(['*' => Http::response('', 204)]);
+
+        (new LalamoveDriver($this->config()))->cancelShipment('ORD-001', 'MERCHANT-REF-9');
+
+        $log = CourierApiLog::sole();
+
+        $this->assertSame('cancel_order', $log->action);
+        $this->assertSame('MERCHANT-REF-9', $log->reference);
+        $this->assertSame('ORD-001', $log->waybill_number);
+    }
 }
