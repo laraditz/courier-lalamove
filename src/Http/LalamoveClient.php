@@ -34,9 +34,9 @@ class LalamoveClient
         return $this->post('/v3/quotations', $body, 'create_quotation', reference: $reference);
     }
 
-    public function getQuotation(string $quotationId): array
+    public function getQuotation(string $quotationId, ?string $reference = null): array
     {
-        return $this->get("/v3/quotations/{$quotationId}", 'get_quotation');
+        return $this->get("/v3/quotations/{$quotationId}", 'get_quotation', reference: $reference);
     }
 
     public function createOrder(array $body, ?string $reference = null): array

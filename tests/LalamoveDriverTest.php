@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Http;
 use Laraditz\Courier\DTOs\Payloads\AvailabilityPayload;
 use Laraditz\Courier\DTOs\Payloads\RatePayload;
 use Laraditz\Courier\DTOs\Payloads\ShipmentPayload;
+use Laraditz\Courier\Models\CourierApiLog;
 use Laraditz\Courier\DTOs\Results\CancelResult;
 use Laraditz\Courier\DTOs\Results\DriverLocationResult;
 use Laraditz\Courier\DTOs\Results\QuotationResult;
@@ -297,5 +298,56 @@ class LalamoveDriverTest extends TestCase
                 && $stops[0]['address'] === 'Line 1, KL'
                 && $stops[0]['coordinates']['lat'] === '3.139';
         });
+    }
+
+    // ── API log reference threading ───────────────────────────────────────
+
+    public function test_create_shipment_threads_reference_onto_both_log_rows(): void
+    {
+        Http::fake([
+            '*/v3/quotations' => Http::response($this->quotationResponse(), 201),
+            '*/v3/orders'     => Http::response($this->orderResponse(), 201),
+        ]);
+
+        (new LalamoveDriver($this->config()))->createShipment(new ShipmentPayload(
+            sender:      $this->makeAddress(),
+            recipient:   $this->makeAddress(),
+            parcel:      $this->makeParcel(),
+            serviceCode: 'MOTORCYCLE',
+            reference:   'MERCHANT-REF-9',
+        ));
+
+        $logs = CourierApiLog::orderBy('id')->get();
+
+        $this->assertCount(2, $logs);
+        $this->assertSame(['create_quotation', 'create_order'], $logs->pluck('action')->all());
+        $this->assertSame(['MERCHANT-REF-9', 'MERCHANT-REF-9'], $logs->pluck('reference')->all());
+
+        // Lalamove assigns the order id in the response, so create_order can never
+        // carry a waybill_number — reference is the only way to find this row.
+        $this->assertNull($logs->last()->waybill_number);
+    }
+
+    public function test_create_shipment_threads_reference_when_reusing_a_quotation(): void
+    {
+        Http::fake([
+            '*/v3/quotations/QUO-1' => Http::response($this->quotationResponse(), 200),
+            '*/v3/orders'           => Http::response($this->orderResponse(), 201),
+        ]);
+
+        (new LalamoveDriver($this->config()))
+            ->withQuotationId('QUO-1')
+            ->createShipment(new ShipmentPayload(
+                sender:      $this->makeAddress(),
+                recipient:   $this->makeAddress(),
+                parcel:      $this->makeParcel(),
+                serviceCode: 'MOTORCYCLE',
+                reference:   'MERCHANT-REF-9',
+            ));
+
+        $logs = CourierApiLog::orderBy('id')->get();
+
+        $this->assertSame(['get_quotation', 'create_order'], $logs->pluck('action')->all());
+        $this->assertSame(['MERCHANT-REF-9', 'MERCHANT-REF-9'], $logs->pluck('reference')->all());
     }
 }
