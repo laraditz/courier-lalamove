@@ -333,6 +333,38 @@ public string $market;
 public array  $raw; // full order snapshot
 ```
 
+## API logging
+
+Every outbound Lalamove API call is recorded in `courier_api_logs` by `laraditz/courier`'s `CourierHttpClient`. Nothing extra is needed to switch it on — publish and run the core package's migrations, and rows appear.
+
+Each row carries a stable `action` naming the operation:
+
+| Named method | `action` | `reference` | `waybill_number` |
+|---|---|---|---|
+| `createQuotation()` | `create_quotation` | via `createShipment()` * | — |
+| `getQuotation()` | `get_quotation` | via `createShipment()` * | — |
+| `createOrder()` | `create_order` | via `createShipment()` * | — |
+| `getOrder()` | `get_order` | — | order id |
+| `cancelOrder()` | `cancel_order` | from `cancelShipment()` | order id |
+| `getCities()` | `get_cities` | — | — |
+| `removeDriver()` | `remove_driver` | — | order id |
+| `addPriorityFee()` | `add_priority_fee` | — | order id |
+| `getDriverLocation()` | `get_driver_location` | — | order id |
+| `editOrder()` | `edit_order` | — | order id |
+| `setWebhookUrl()` | `set_webhook_url` | — | — |
+
+\* Only `createShipment()` supplies a reference. `getRates()` and the public `getQuotation()` call the same endpoints without one, so those rows have `reference` null.
+
+`create_order` never carries a `waybill_number` — Lalamove assigns the order id in the response, after the request has already been logged. `createShipment()` threads `ShipmentPayload::$reference` onto every row it produces, so that is how you find a shipment's creation calls:
+
+```php
+CourierApiLog::forDriver('lalamove')->forReference('YOUR-REF')->get();
+```
+
+`getLabel()` makes no HTTP request in this driver, so it produces no row.
+
+Logging is global to `laraditz/courier` and honours its config: set `COURIER_LOGGING_ENABLED=false` to turn it off, and `courier.logging.redact` controls which keys are masked. Lalamove's only credential travels in the `Authorization` header, which the shipped redact list already covers.
+
 ## Testing
 
 ```bash
