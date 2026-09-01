@@ -167,4 +167,31 @@ class LalamoveClientTest extends TestCase
 
         $this->assertSame(1, CourierApiLog::where('driver', 'lalamove')->count());
     }
+
+    public function test_post_logs_a_row_with_its_action_and_method(): void
+    {
+        Http::fake(['*' => Http::response(['data' => ['quotationId' => 'Q1']], 200)]);
+
+        $this->makeClient()->createQuotation(['serviceType' => 'MOTORCYCLE']);
+
+        $log = CourierApiLog::sole();
+
+        $this->assertSame('lalamove', $log->driver);
+        $this->assertSame('create_quotation', $log->action);
+        $this->assertSame('POST', $log->method);
+        $this->assertSame(200, $log->status_code);
+        $this->assertTrue($log->successful);
+    }
+
+    public function test_patch_logs_a_row_with_its_action_and_method(): void
+    {
+        Http::fake(['*' => Http::response(['data' => []], 200)]);
+
+        $this->makeClient()->setWebhookUrl('https://example.test/hook');
+
+        $log = CourierApiLog::sole();
+
+        $this->assertSame('set_webhook_url', $log->action);
+        $this->assertSame('PATCH', $log->method);
+    }
 }

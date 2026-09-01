@@ -30,9 +30,9 @@ class LalamoveClient
 
     // ── Named API methods ────────────────────────────────────────────────
 
-    public function createQuotation(array $body): array
+    public function createQuotation(array $body, ?string $reference = null): array
     {
-        return $this->post('/v3/quotations', $body);
+        return $this->post('/v3/quotations', $body, 'create_quotation', reference: $reference);
     }
 
     public function getQuotation(string $quotationId): array
@@ -40,9 +40,9 @@ class LalamoveClient
         return $this->get("/v3/quotations/{$quotationId}", 'get_quotation');
     }
 
-    public function createOrder(array $body): array
+    public function createOrder(array $body, ?string $reference = null): array
     {
-        return $this->post('/v3/orders', $body);
+        return $this->post('/v3/orders', $body, 'create_order', reference: $reference);
     }
 
     public function getOrder(string $orderId): array
@@ -67,7 +67,7 @@ class LalamoveClient
 
     public function addPriorityFee(string $orderId, array $body): array
     {
-        return $this->post("/v3/orders/{$orderId}/priority-fee", $body);
+        return $this->post("/v3/orders/{$orderId}/priority-fee", $body, 'add_priority_fee', $orderId);
     }
 
     public function getDriverLocation(string $orderId, string $driverId): array
@@ -80,32 +80,40 @@ class LalamoveClient
     // pickup stop's values must stay identical to the original.
     public function editOrder(string $orderId, array $stops): array
     {
-        return $this->patch("/v3/orders/{$orderId}", ['stops' => $stops]);
+        return $this->patch("/v3/orders/{$orderId}", ['stops' => $stops], 'edit_order', $orderId);
     }
 
     public function setWebhookUrl(string $url): array
     {
-        return $this->patch('/v3/webhook', ['url' => $url]);
+        return $this->patch('/v3/webhook', ['url' => $url], 'set_webhook_url');
     }
 
     // ── Transport ────────────────────────────────────────────────────────
 
-    private function post(string $path, array $body): array
+    // $json is the signature input only — CourierHttpClient takes the array and lets
+    // Guzzle encode it. Guzzle uses json_encode($value, 0, 512); JSON_THROW_ON_ERROR
+    // changes error handling, not output, so the two are byte-identical. HmacSignatureTest
+    // pins that: if it ever stops holding, every call 401s for a non-obvious reason.
+    private function post(string $path, array $body, string $action, ?string $waybillNumber = null, ?string $reference = null): array
     {
-        $json      = json_encode(['data' => $body], JSON_THROW_ON_ERROR);
-        $response  = Http::withHeaders($this->headers('POST', $path, $json))
-            ->withBody($json, 'application/json')
-            ->post($this->baseUrl() . $path);
+        $payload = ['data' => $body];
+        $json    = json_encode($payload, JSON_THROW_ON_ERROR);
+
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->post($this->baseUrl() . $path, $payload, $this->headers('POST', $path, $json));
 
         return $this->handleResponse($response);
     }
 
-    private function patch(string $path, array $body): array
+    private function patch(string $path, array $body, string $action, ?string $waybillNumber = null, ?string $reference = null): array
     {
-        $json     = json_encode(['data' => $body], JSON_THROW_ON_ERROR);
-        $response = Http::withHeaders($this->headers('PATCH', $path, $json))
-            ->withBody($json, 'application/json')
-            ->patch($this->baseUrl() . $path);
+        $payload = ['data' => $body];
+        $json    = json_encode($payload, JSON_THROW_ON_ERROR);
+
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->patch($this->baseUrl() . $path, $payload, $this->headers('PATCH', $path, $json));
 
         return $this->handleResponse($response);
     }
