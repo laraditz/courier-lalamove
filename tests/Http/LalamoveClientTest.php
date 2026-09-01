@@ -6,8 +6,10 @@ use Illuminate\Support\Facades\Http;
 use Laraditz\Courier\Exceptions\AuthenticationException;
 use Laraditz\Courier\Exceptions\CancellationException;
 use Laraditz\Courier\Exceptions\CourierException;
+use Laraditz\Courier\Http\CourierHttpClient;
 use Laraditz\Courier\Lalamove\Http\LalamoveClient;
 use Laraditz\Courier\Lalamove\Tests\TestCase;
+use Laraditz\Courier\Models\CourierApiLog;
 
 class LalamoveClientTest extends TestCase
 {
@@ -148,5 +150,21 @@ class LalamoveClientTest extends TestCase
                 && $r->method() === 'PATCH'
                 && $r->data()['data']['url'] === 'https://example.com';
         });
+    }
+
+    public function test_client_routes_requests_through_the_injected_http_client(): void
+    {
+        Http::fake(['*' => Http::response(['data' => []], 200)]);
+
+        $client = new LalamoveClient([
+            'key'     => 'pk_test_key',
+            'secret'  => 'sk_test_secret',
+            'sandbox' => true,
+            'market'  => 'MY',
+        ], new CourierHttpClient());
+
+        $client->getCities();
+
+        $this->assertSame(1, CourierApiLog::where('driver', 'lalamove')->count());
     }
 }

@@ -7,10 +7,19 @@ use Illuminate\Support\Str;
 use Laraditz\Courier\Exceptions\AuthenticationException;
 use Laraditz\Courier\Exceptions\CancellationException;
 use Laraditz\Courier\Exceptions\CourierException;
+use Laraditz\Courier\Http\CourierHttpClient;
 
 class LalamoveClient
 {
-    public function __construct(private array $config) {}  // NOT readonly — withMarket() needs to mutate the clone
+    private CourierHttpClient $http;
+
+    // $config is NOT readonly — withMarket() needs to mutate the clone.
+    // CourierHttpClient is not container-bound, so constructing one here is correct;
+    // the parameter exists so tests can inject their own.
+    public function __construct(private array $config, ?CourierHttpClient $http = null)
+    {
+        $this->http = $http ?? new CourierHttpClient();
+    }
 
     public function withMarket(string $market): static
     {
@@ -28,7 +37,7 @@ class LalamoveClient
 
     public function getQuotation(string $quotationId): array
     {
-        return $this->get("/v3/quotations/{$quotationId}");
+        return $this->get("/v3/quotations/{$quotationId}", 'get_quotation');
     }
 
     public function createOrder(array $body): array
@@ -38,7 +47,7 @@ class LalamoveClient
 
     public function getOrder(string $orderId): array
     {
-        return $this->get("/v3/orders/{$orderId}");
+        return $this->get("/v3/orders/{$orderId}", 'get_order', $orderId);
     }
 
     public function cancelOrder(string $orderId): void
@@ -48,7 +57,7 @@ class LalamoveClient
 
     public function getCities(): array
     {
-        return $this->get('/v3/cities');
+        return $this->get('/v3/cities', 'get_cities');
     }
 
     public function removeDriver(string $orderId, string $driverId): void
@@ -63,7 +72,7 @@ class LalamoveClient
 
     public function getDriverLocation(string $orderId, string $driverId): array
     {
-        return $this->get("/v3/orders/{$orderId}/drivers/{$driverId}");
+        return $this->get("/v3/orders/{$orderId}/drivers/{$driverId}", 'get_driver_location', $orderId);
     }
 
     // Lalamove has no per-stop endpoint: editing replaces the entire stops array in
@@ -101,10 +110,14 @@ class LalamoveClient
         return $this->handleResponse($response);
     }
 
-    private function get(string $path): array
+    // forLog() is called on every request, immediately before the verb. It mutates
+    // and returns $this, and leaves configured = true, so an inherited context would
+    // log silently against the previous call's action. Never rely on it persisting.
+    private function get(string $path, string $action, ?string $waybillNumber = null, ?string $reference = null): array
     {
-        $response = Http::withHeaders($this->headers('GET', $path, ''))
-            ->get($this->baseUrl() . $path);
+        $response = $this->http
+            ->forLog('lalamove', $action, $reference, $waybillNumber)
+            ->get($this->baseUrl() . $path, [], $this->headers('GET', $path, ''));
 
         return $this->handleResponse($response);
     }
